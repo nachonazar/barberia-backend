@@ -1,7 +1,8 @@
 import Servicio from "../models/servicio.js";
+import Barbero from "../models/barbero.js";
 
 // Datos de PRUEBA para desarrollo. Solo se cargan si CARGAR_DATOS_PRUEBA=true
-// y la colección está vacía. En producción esa variable no se define.
+// y la colección correspondiente está vacía. En producción esa variable no se define.
 const serviciosPrueba = [
   {
     nombre: "Corte clásico",
@@ -47,11 +48,49 @@ const serviciosPrueba = [
   },
 ].map((servicio, indice) => ({ ...servicio, orden: indice + 1 }));
 
+const barberosPrueba = [
+  {
+    nombre: "Barbero de ejemplo 1",
+    nombreCorto: "Barbero 1",
+    rol: "Fundador y maestro",
+    especialidad: "+12 años de trayectoria",
+    descripcion:
+      "Descripción de ejemplo: especialista en cortes clásicos y afeitado tradicional con toalla caliente.",
+    foto: "/img/equipo-1.webp",
+    destacado: true,
+  },
+  {
+    nombre: "Barbero de ejemplo 2",
+    nombreCorto: "Barbero 2",
+    rol: "Senior stylist",
+    especialidad: "Especialista en fades y tendencias",
+    descripcion:
+      "Descripción de ejemplo: texturizados, degradés y cortes modernos con tijera y navaja.",
+    foto: "/img/equipo-2.webp",
+    destacado: false,
+  },
+  {
+    nombre: "Barbero de ejemplo 3",
+    nombreCorto: "Barbero 3",
+    rol: "Grooming specialist",
+    especialidad: "Barba y cuidado dérmico",
+    descripcion:
+      "Descripción de ejemplo: tratamientos de hidratación y diseño de barbas de alta densidad.",
+    foto: "/img/equipo-3.webp",
+    destacado: false,
+  },
+].map((barbero, indice) => ({ ...barbero, orden: indice + 1 }));
+
 export const cargarDatosPrueba = async () => {
   if (process.env.CARGAR_DATOS_PRUEBA !== "true") return;
 
   if ((await Servicio.estimatedDocumentCount()) === 0) {
     await Servicio.insertMany(serviciosPrueba);
     console.info("Servicios de prueba cargados");
+  }
+
+  if ((await Barbero.estimatedDocumentCount()) === 0) {
+    await Barbero.insertMany(barberosPrueba);
+    console.info("Barberos de prueba cargados");
   }
 };
