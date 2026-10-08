@@ -82,6 +82,15 @@ export default class Server {
           .json({ mensaje: "El cuerpo de la solicitud es demasiado grande" });
       }
 
+      if (err.name === "ValidationError" && err.errors) {
+        return res.status(400).json({
+          errores: Object.values(err.errors).map((e) => ({
+            mensaje: e.message,
+            campo: e.path,
+          })),
+        });
+      }
+
       if (err.name === "CastError") {
         return res.status(400).json({ mensaje: "Formato de ID inválido" });
       }
