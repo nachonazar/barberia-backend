@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import { conectarDB } from "../db/config.js";
+import { cargarDatosPrueba } from "../src/helpers/cargaInicial.js";
 
 export default class Server {
   constructor() {
@@ -22,6 +23,13 @@ export default class Server {
       console.error(
         "No se pudo establecer la conexión inicial a la base de datos",
       );
+      return;
+    }
+
+    try {
+      await cargarDatosPrueba();
+    } catch (error) {
+      console.error("No se pudieron cargar los datos de prueba:", error);
     }
   }
 
@@ -63,11 +71,15 @@ export default class Server {
       console.error("Error capturado por el middleware central:", err);
 
       if (err.type === "entity.parse.failed") {
-        return res.status(400).json({ mensaje: "El cuerpo de la solicitud no es un JSON válido" });
+        return res
+          .status(400)
+          .json({ mensaje: "El cuerpo de la solicitud no es un JSON válido" });
       }
 
       if (err.type === "entity.too.large") {
-        return res.status(413).json({ mensaje: "El cuerpo de la solicitud es demasiado grande" });
+        return res
+          .status(413)
+          .json({ mensaje: "El cuerpo de la solicitud es demasiado grande" });
       }
 
       if (err.name === "CastError") {
