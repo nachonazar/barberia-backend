@@ -4,16 +4,16 @@ const usuarioSchema = new Schema(
   {
     nombreAdmin: {
       type: String,
-      required: true,
-      minlength: 2,
-      maxlength: 100,
+      required: [true, "El nombre es obligatorio"],
+      minlength: [2, "El nombre debe tener al menos 2 caracteres"],
+      maxlength: [100, "El nombre no puede superar los 100 caracteres"],
       trim: true,
     },
     email: {
       type: String,
-      required: true,
-      minlength: 5,
-      maxlength: 100,
+      required: [true, "El email es obligatorio"],
+      minlength: [5, "El email debe tener al menos 5 caracteres"],
+      maxlength: [100, "El email no puede superar los 100 caracteres"],
       unique: true,
       lowercase: true,
       trim: true,
@@ -24,17 +24,28 @@ const usuarioSchema = new Schema(
     },
     password: {
       type: String,
-      required: true,
-      maxlength: 100,
+      required: [true, "La contraseña es obligatoria"],
+      maxlength: [100, "La contraseña no es válida"],
+      select: false,
     },
     rol: {
       type: String,
-      enum: ["admin"],
+      enum: {
+        values: ["admin"],
+        message: "El rol no es válido",
+      },
       default: "admin",
     },
   },
   {
     timestamps: true,
+    toJSON: {
+      transform: (_doc, ret) => {
+        delete ret.password;
+        delete ret.__v;
+        return ret;
+      },
+    },
   },
 );
 
