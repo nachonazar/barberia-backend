@@ -4,6 +4,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { conectarDB } from "../db/config.js";
 import { cargarDatosPrueba } from "../src/helpers/cargaInicial.js";
+import { crearPrimerAdmin } from "../src/helpers/primerAdmin.js";
 
 export default class Server {
   constructor() {
@@ -30,6 +31,12 @@ export default class Server {
       await cargarDatosPrueba();
     } catch (error) {
       console.error("No se pudieron cargar los datos de prueba:", error);
+    }
+
+    try {
+      await crearPrimerAdmin();
+    } catch (error) {
+      console.error("No se pudo crear el administrador inicial:", error);
     }
   }
 
@@ -58,6 +65,7 @@ export default class Server {
         },
       }),
     );
+
     this.app.use(express.json({ limit: "10kb" }));
     this.app.use(morgan("dev"));
   }
