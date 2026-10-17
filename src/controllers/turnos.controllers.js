@@ -1,9 +1,12 @@
+import { matchedData } from "express-validator";
 import { randomInt } from "node:crypto";
+
 import Turno, { ESTADOS_QUE_OCUPAN } from "../models/turno.js";
 import Bloqueo from "../models/bloqueo.js";
 import Servicio from "../models/servicio.js";
 import Barbero from "../models/barbero.js";
 import { JORNADA } from "../config/negocio.js";
+
 import {
   ahoraLocal,
   diaSemana,
@@ -12,12 +15,19 @@ import {
   minutosAHora,
   sumarDias,
 } from "../helpers/fechas.js";
+
 import { parsearIdsBarberos } from "../helpers/validacionesTurnos.js";
 
 const MENSAJE_HORARIO_TOMADO = "Ese horario ya fue tomado, elegí otro";
 
 const error400 = (res, campo, mensaje) =>
   res.status(400).json({ errores: [{ mensaje, campo }] });
+
+const POPULATE_BARBERO = "nombre nombreCorto rol foto";
+const CAMPOS_EXCLUIDOS = "-slots -__v";
+
+// Escapa los caracteres especiales para usar el texto de búsqueda dentro de un regex.
+const escaparRegex = (texto) => texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const generarCodigo = () => `AT-${randomInt(10000, 100000)}`;
 
@@ -36,6 +46,7 @@ const insertarTurno = async (datos) => {
       return null;
     }
   }
+
   throw new Error("No se pudo generar un código de turno único");
 };
 
@@ -51,6 +62,7 @@ export const listarOcupados = async (req, res) => {
     })
       .select("barbero horaInicio horaFin -_id")
       .lean(),
+
     Bloqueo.find({
       fecha,
       barbero: { $in: [...barberosIds, null] },
@@ -59,11 +71,12 @@ export const listarOcupados = async (req, res) => {
       .lean(),
   ]);
 
-  // Un bloqueo de día completo cubre toda la jornada
+  // Un bloqueo de día completo cubre toda la jornada.
   const inicioJornada = JORNADA.bloques[0].inicio;
   const finJornada = JORNADA.bloques[JORNADA.bloques.length - 1].fin;
 
   const ocupados = {};
+
   barberosIds.forEach((id) => {
     ocupados[id] = [];
   });
@@ -80,8 +93,12 @@ export const listarOcupados = async (req, res) => {
       horaInicio: bloqueo.horaInicio ?? inicioJornada,
       horaFin: bloqueo.horaFin ?? finJornada,
     };
-    // barbero null = bloquea a todos los consultados
-    const afectados = bloqueo.barbero ? [String(bloqueo.barbero)] : barberosIds;
+
+    // barbero null = bloquea a todos los consultados.
+    const afectados = bloqueo.barbero
+      ? [String(bloqueo.barbero)]
+      : barberosIds;
+
     afectados.forEach((id) => ocupados[id].push(rango));
   });
 
@@ -91,6 +108,108 @@ export const listarOcupados = async (req, res) => {
 
   res.set("Cache-Control", "no-store");
   res.status(200).json(ocupados);
+};
+
+export const listarTurnos = async (req, res) => {
+  const {
+    pagina = 1,
+    limite = 20,
+    estado,
+    barbero,
+    desde,
+    hasta,
+    buscar,
+  } = matchedData(req, { locations: ["query"] });
+
+  const filtro = {};
+
+  if (estado) filtro.estado = estado;
+  if (barbero) filtro.barbero = barbero;
+
+  if (desde || hasta) {
+    filtro.fecha = {};
+    if (desde) filtro.fecha.$gte = desde;
+    if (hasta) filtro.fecha.$lte = hasta;
+  }
+
+  if (buscar) {
+    const patron = escaparRegex(buscar);
+
+    filtro.$or = [
+      { "cliente.nombre": { $regex: patron, $options: "i" } },
+      { "cliente.telefono": { $regex: patron } },
+      { codigo: { $regex: patron, $options: "i" } },
+    ];
+  }
+
+  const [turnos, total] = await Promise.all([
+    Turno.find(filtro)
+      .sort({ fecha: -1, horaInicio: -1, _id: -1 })
+      .skip((pagina - 1) * limite)
+      .limit(limite)
+      .select(CAMPOS_EXCLUIDOS)
+      .populate("barbero", POPULATE_BARBERO)
+      .lean(),
+
+    Turno.countDocuments(filtro),
+  ]);
+
+  res.set("Cache-Control", "no-store");
+
+  res.status(200).json({
+    turnos,
+    total,
+    pagina,
+    limite,
+    totalPaginas: Math.ceil(total / limite),
+  });
+};
+
+export const obtenerTurno = async (req, res) => {
+  const turno = await Turno.findById(req.params.id)
+    .select(CAMPOS_EXCLUIDOS)
+    .populate("barbero", POPULATE_BARBERO)
+    .lean();
+
+  if (!turno) {
+    return res.status(404).json({ mensaje: "El turno no existe" });
+  }
+
+  res.set("Cache-Control", "no-store");
+  res.status(200).json(turno);
+};
+
+export const cambiarEstadoTurno = async (req, res) => {
+  const { id } = req.params;
+  const { estado } = req.body;
+
+  // Atómico: solo actualiza si el turno sigue confirmado.
+  const turno = await Turno.findOneAndUpdate(
+    { _id: id, estado: "confirmado" },
+    { $set: { estado } },
+    { new: true, runValidators: true },
+  )
+    .select(CAMPOS_EXCLUIDOS)
+    .populate("barbero", POPULATE_BARBERO)
+    .lean();
+
+  if (turno) {
+    return res
+      .status(200)
+      .json({ mensaje: "Estado del turno actualizado", turno });
+  }
+
+  const existente = await Turno.findById(id).select("estado").lean();
+
+  if (!existente) {
+    return res.status(404).json({ mensaje: "El turno no existe" });
+  }
+
+  return error400(
+    res,
+    "estado",
+    `Solo se puede cambiar el estado de un turno confirmado (este turno está ${existente.estado})`,
+  );
 };
 
 export const crearTurno = async (req, res) => {
@@ -104,35 +223,49 @@ export const crearTurno = async (req, res) => {
     recordatorioWhatsapp,
   } = req.body;
 
-  // 1. Servicios: el servidor recalcula duración y precio desde la base
+  // 1. Servicios: el servidor recalcula duración y precio desde la base.
   const serviciosDB = await Servicio.find({
     _id: { $in: serviciosIds },
     activo: true,
   }).lean();
 
   if (serviciosDB.length !== serviciosIds.length) {
-    return error400(res, "servicios", "Alguno de los servicios ya no está disponible");
+    return error400(
+      res,
+      "servicios",
+      "Alguno de los servicios ya no está disponible",
+    );
   }
 
   const serviciosOrdenados = serviciosIds.map((id) =>
     serviciosDB.find((servicio) => String(servicio._id) === id),
   );
-  const duracionMin = serviciosOrdenados.reduce((suma, s) => suma + s.duracionMin, 0);
-  const precioTotal = serviciosOrdenados.reduce((suma, s) => suma + s.precio, 0);
+
+  const duracionMin = serviciosOrdenados.reduce(
+    (suma, s) => suma + s.duracionMin,
+    0,
+  );
+
+  const precioTotal = serviciosOrdenados.reduce(
+    (suma, s) => suma + s.precio,
+    0,
+  );
 
   const inicioMin = horaAMinutos(horaInicio);
   const finMin = inicioMin + duracionMin;
   const horaFin = minutosAHora(finMin);
 
-  // 2. Día abierto y dentro de la ventana de reserva
+  // 2. Día abierto y dentro de la ventana de reserva.
   const ahora = ahoraLocal();
 
   if (!JORNADA.diasAbiertos.includes(diaSemana(fecha))) {
     return error400(res, "fecha", "La barbería está cerrada ese día");
   }
+
   if (fecha < ahora.fecha) {
     return error400(res, "fecha", "La fecha ya pasó");
   }
+
   if (fecha > sumarDias(ahora.fecha, JORNADA.diasAdelante)) {
     return error400(
       res,
@@ -141,8 +274,11 @@ export const crearTurno = async (req, res) => {
     );
   }
 
-  // 3. Anticipación mínima (solo aplica si el turno es hoy)
-  if (fecha === ahora.fecha && inicioMin < ahora.minutos + JORNADA.anticipacionMin) {
+  // 3. Anticipación mínima (solo aplica si el turno es hoy).
+  if (
+    fecha === ahora.fecha &&
+    inicioMin < ahora.minutos + JORNADA.anticipacionMin
+  ) {
     return error400(
       res,
       "horaInicio",
@@ -150,10 +286,11 @@ export const crearTurno = async (req, res) => {
     );
   }
 
-  // 4. Que el horario caiga en la grilla y el turno entre completo en un bloque
+  // 4. Que el horario caiga en la grilla y el turno entre completo en un bloque.
   const entraEnGrilla = JORNADA.bloques.some((bloque) => {
     const inicioBloque = horaAMinutos(bloque.inicio);
     const finBloque = horaAMinutos(bloque.fin);
+
     return (
       inicioMin >= inicioBloque &&
       finMin <= finBloque &&
@@ -162,11 +299,16 @@ export const crearTurno = async (req, res) => {
   });
 
   if (!entraEnGrilla) {
-    return error400(res, "horaInicio", "El horario elegido no es válido para la duración del turno");
+    return error400(
+      res,
+      "horaInicio",
+      "El horario elegido no es válido para la duración del turno",
+    );
   }
 
-  // 5. Barbero(s) candidato(s), en el orden definido en el panel
+  // 5. Barbero(s) candidato(s), en el orden definido en el panel.
   let candidatos;
+
   if (barberoSolicitado === "cualquiera") {
     candidatos = await Barbero.find({ activo: true })
       .sort({ orden: 1, createdAt: 1 })
@@ -176,6 +318,7 @@ export const crearTurno = async (req, res) => {
       _id: barberoSolicitado,
       activo: true,
     }).lean();
+
     candidatos = barbero ? [barbero] : [];
   }
 
@@ -183,7 +326,7 @@ export const crearTurno = async (req, res) => {
     return error400(res, "barbero", "El barbero elegido no está disponible");
   }
 
-  // 6. Bloqueos de ese día (del barbero o de todos)
+  // 6. Bloqueos de ese día (del barbero o de todos).
   const bloqueos = await Bloqueo.find({
     fecha,
     barbero: { $in: [...candidatos.map((c) => c._id), null] },
@@ -194,14 +337,21 @@ export const crearTurno = async (req, res) => {
       if (bloqueo.barbero && String(bloqueo.barbero) !== String(barberoId)) {
         return false;
       }
-      const inicioBloqueo = bloqueo.horaInicio ? horaAMinutos(bloqueo.horaInicio) : 0;
-      const finBloqueo = bloqueo.horaFin ? horaAMinutos(bloqueo.horaFin) : 24 * 60;
+
+      const inicioBloqueo = bloqueo.horaInicio
+        ? horaAMinutos(bloqueo.horaInicio)
+        : 0;
+
+      const finBloqueo = bloqueo.horaFin
+        ? horaAMinutos(bloqueo.horaFin)
+        : 24 * 60;
+
       return solapan(inicioMin, finMin, inicioBloqueo, finBloqueo);
     });
 
   const libres = candidatos.filter((barbero) => !estaBloqueado(barbero._id));
 
-  // 7. Insertar: el índice único decide quién se queda con las franjas
+  // 7. Insertar: el índice único decide quién se queda con las franjas.
   const slots = generarSlots(fecha, inicioMin, finMin);
 
   for (const barbero of libres) {
@@ -212,6 +362,7 @@ export const crearTurno = async (req, res) => {
         duracionMin: s.duracionMin,
         precio: s.precio,
       })),
+
       barbero: barbero._id,
       fecha,
       horaInicio,
@@ -219,17 +370,20 @@ export const crearTurno = async (req, res) => {
       duracionMin,
       precioTotal,
       slots,
+
       cliente: {
         nombre: cliente.nombre,
         telefono: cliente.telefono,
         email: cliente.email || "",
       },
+
       notas: notas || "",
       recordatorioWhatsapp: Boolean(recordatorioWhatsapp),
     });
 
-    if (!turno) continue; // otra reserva se llevó ese barbero: probar con el siguiente
+    if (!turno) continue;
 
+    // Otra reserva se llevó ese barbero: probar con el siguiente.
     return res.status(201).json({
       turno: {
         _id: turno._id,
@@ -246,6 +400,7 @@ export const crearTurno = async (req, res) => {
         notas: turno.notas,
         recordatorioWhatsapp: turno.recordatorioWhatsapp,
       },
+
       serviciosDetalle: serviciosOrdenados.map((s) => ({
         _id: s._id,
         nombre: s.nombre,
@@ -254,6 +409,7 @@ export const crearTurno = async (req, res) => {
         duracionMin: s.duracionMin,
         precio: s.precio,
       })),
+
       barberoDetalle: {
         _id: barbero._id,
         nombre: barbero.nombre,

@@ -1,5 +1,6 @@
-import { body, query } from "express-validator";
+import { body, param, query } from "express-validator";
 import { fechaValida, horaValida } from "./fechas.js";
+import { ESTADOS_TURNO } from "../models/turno.js";
 
 const MAX_BARBEROS = 20;
 const MAX_SERVICIOS = 10;
@@ -111,4 +112,109 @@ export const validarCrearTurno = [
     .optional()
     .isBoolean()
     .withMessage("El recordatorio de WhatsApp debe ser verdadero o falso"),
+];
+
+const MAX_BUSQUEDA = 50;
+const MAX_PAGINA = 100000;
+const MAX_LIMITE = 100;
+// Desde "confirmado" solo se puede pasar a estos estados.
+const ESTADOS_DESTINO = ESTADOS_TURNO.filter((estado) => estado !== "confirmado");
+
+// Los query params pueden llegar como array (?estado=a&estado=b): por eso cada
+// validador comprueba primero que el valor sea un string.
+const opcional = { values: "falsy" };
+
+const validarEnteroEntre = (valor, minimo, maximo, mensaje) => {
+  if (typeof valor !== "string" || !/^\d{1,6}$/.test(valor)) {
+    throw new Error(mensaje);
+  }
+  const numero = Number(valor);
+  if (numero < minimo || numero > maximo) {
+    throw new Error(mensaje);
+  }
+  return true;
+};
+
+export const validarListarTurnos = [
+  query("pagina")
+    .optional(opcional)
+    .custom((valor) =>
+      validarEnteroEntre(valor, 1, MAX_PAGINA, "La página debe ser un número entero mayor o igual a 1"),
+    )
+    .bail()
+    .toInt(),
+  query("limite")
+    .optional(opcional)
+    .custom((valor) =>
+      validarEnteroEntre(valor, 1, MAX_LIMITE, `El límite debe ser un entero entre 1 y ${MAX_LIMITE}`),
+    )
+    .bail()
+    .toInt(),
+  query("estado")
+    .optional(opcional)
+    .custom((valor) => {
+      if (typeof valor !== "string" || !ESTADOS_TURNO.includes(valor)) {
+        throw new Error(`El estado debe ser uno de: ${ESTADOS_TURNO.join(", ")}`);
+      }
+      return true;
+    }),
+  query("barbero")
+    .optional(opcional)
+    .custom((valor) => {
+      if (typeof valor !== "string" || !regexObjectId.test(valor)) {
+        throw new Error("El id del barbero no es válido");
+      }
+      return true;
+    }),
+  query("desde")
+    .optional(opcional)
+    .custom((valor) => {
+      if (typeof valor !== "string" || !fechaValida(valor)) {
+        throw new Error("La fecha 'desde' debe tener el formato YYYY-MM-DD y ser válida");
+      }
+      return true;
+    }),
+  query("hasta")
+    .optional(opcional)
+    .custom((valor, { req }) => {
+      if (typeof valor !== "string" || !fechaValida(valor)) {
+        throw new Error("La fecha 'hasta' debe tener el formato YYYY-MM-DD y ser válida");
+      }
+      const desde = req.query.desde;
+      if (typeof desde === "string" && fechaValida(desde) && desde > valor) {
+        throw new Error("La fecha 'desde' no puede ser posterior a 'hasta'");
+      }
+      return true;
+    }),
+  query("buscar")
+    .optional(opcional)
+    .custom((valor) => {
+      if (typeof valor !== "string") {
+        throw new Error("La búsqueda debe ser texto");
+      }
+      return true;
+    })
+    .bail()
+    .trim()
+    .isLength({ max: MAX_BUSQUEDA })
+    .withMessage(`La búsqueda no puede superar los ${MAX_BUSQUEDA} caracteres`),
+];
+
+export const validarIdTurno = [
+  param("id").custom((valor) => {
+    if (typeof valor !== "string" || !regexObjectId.test(valor)) {
+      throw new Error("El id del turno no es válido");
+    }
+    return true;
+  }),
+];
+
+export const validarCambiarEstado = [
+  ...validarIdTurno,
+  body("estado").custom((valor) => {
+    if (typeof valor !== "string" || !ESTADOS_DESTINO.includes(valor)) {
+      throw new Error(`El estado debe ser uno de: ${ESTADOS_DESTINO.join(", ")}`);
+    }
+    return true;
+  }),
 ];
