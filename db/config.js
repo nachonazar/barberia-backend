@@ -2,14 +2,21 @@ import mongoose from "mongoose";
 
 let conexionPromise = null;
 
-export const conectarDB = () => {
-  if (!process.env.MONGODB) {
-    throw new Error("Falta la variable de entorno MONGODB");
+export const conectarDB = async () => {
+  const mongoUri = process.env.MONGODB || process.env.MONGODB_URI;
+
+  if (!mongoUri) {
+    throw new Error("Falta la variable de entorno MONGODB o MONGODB_URI");
+  }
+
+  // Si ya hay una conexión activa, la reutiliza
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
   }
 
   if (!conexionPromise) {
     conexionPromise = mongoose
-      .connect(process.env.MONGODB, {
+      .connect(mongoUri, {
         maxPoolSize: 5,
         serverSelectionTimeoutMS: 10000,
       })
@@ -23,6 +30,7 @@ export const conectarDB = () => {
         throw error;
       });
   }
+  
   return conexionPromise;
 };
 
